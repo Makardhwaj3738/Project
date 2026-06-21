@@ -32,6 +32,13 @@ const startServer = async () => {
       fs.mkdirSync(dbPath, { recursive: true });
     }
 
+    // Remove stale lock file left by a previous mongod process (e.g. from nodemon restart)
+    const lockFile = path.join(dbPath, 'mongod.lock');
+    if (fs.existsSync(lockFile)) {
+      fs.unlinkSync(lockFile);
+      console.log('Removed stale mongod.lock file');
+    }
+
     const mongoServer = await MongoMemoryServer.create({
       instance: {
         dbPath: dbPath,
@@ -47,18 +54,25 @@ const startServer = async () => {
     .then(async () => {
       console.log('Connected to MongoDB at', mongoUri);
       
-      // Seed default user
-      const defaultEmail = 'test@example.com';
-      const existingUser = await User.findOne({ email: defaultEmail });
-      if (!existingUser) {
+      // Seed all demo users on startup (upsert — always ensure they exist with correct password)
+      const demoUsers = [
+        { name: 'Test User',      email: 'test@example.com'  },
+        { name: 'Alice Traveler', email: 'alice@example.com' },
+        { name: 'Bob Explorer',   email: 'bob@example.com'   },
+      ];
+
+      for (const demo of demoUsers) {
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash('password123', salt);
-        await User.create({
-          name: 'Test User',
-          email: defaultEmail,
-          passwordHash
-        });
-        console.log(`Default user created: ${defaultEmail} / password123`);
+        const existing = await User.findOne({ email: demo.email });
+        if (!existing) {
+          await User.create({ name: demo.name, email: demo.email, passwordHash });
+          console.log(`Demo user created: ${demo.email} / password123`);
+        } else {
+          existing.passwordHash = passwordHash;
+          await existing.save();
+          console.log(`Demo user password reset: ${demo.email} / password123`);
+        }
       }
 
       app.listen(port, () => {
